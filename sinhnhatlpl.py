@@ -1,7 +1,11 @@
 """Chạy trang chúc mừng sinh nhật Lê Phương Linh trên máy tính của bạn."""
 
 import argparse
+import json
+import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
 
 
 PAGE = """<!doctype html>
@@ -115,27 +119,37 @@ PAGE = """<!doctype html>
       text-align: left;
     }
 
+    .field {
+      display: grid;
+      gap: 8px;
+    }
+
     label {
       color: #743b68;
       font-size: 0.95rem;
       font-weight: 700;
     }
 
+    input,
     textarea {
       width: 100%;
-      min-height: 105px;
-      resize: vertical;
       border: 1px solid #efd4e1;
       border-radius: 16px;
       outline: none;
-      padding: 14px 16px;
+      padding: 13px 16px;
       background: #fffafd;
       color: #542d4b;
       font: inherit;
-      line-height: 1.5;
       transition: border-color 160ms ease, box-shadow 160ms ease;
     }
 
+    textarea {
+      min-height: 105px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    input:focus,
     textarea:focus {
       border-color: #df80a2;
       box-shadow: 0 0 0 4px rgb(223 128 162 / 16%);
@@ -155,6 +169,12 @@ PAGE = """<!doctype html>
       transition: transform 160ms ease, box-shadow 160ms ease;
     }
 
+    button:disabled {
+      cursor: wait;
+      opacity: 0.7;
+      transform: none;
+    }
+
     button:hover {
       transform: translateY(-2px);
       box-shadow: 0 11px 22px rgb(190 101 153 / 30%);
@@ -162,19 +182,141 @@ PAGE = """<!doctype html>
 
     button:active { transform: translateY(0); }
 
-    .wish-result {
-      margin-top: 20px;
-      border-radius: 16px;
-      padding: 16px;
-      background: #fff1f6;
-      color: #743b68;
-      line-height: 1.6;
-      overflow-wrap: anywhere;
+    .music-button {
+      min-height: 44px;
+      margin: 18px 0 0;
+      border: 1px solid #f0cbdc;
+      background: #fff7fa;
+      box-shadow: none;
+      color: #a64d79;
+    }
+
+    .music-button:hover {
+      background: #ffedf4;
+      box-shadow: 0 6px 15px rgb(190 101 153 / 14%);
+    }
+
+    .wish-area {
+      margin-top: 30px;
+      border-top: 1px solid #f3e2eb;
+      padding-top: 25px;
       text-align: left;
     }
 
-    .wish-result[hidden] { display: none; }
-    .wish-result strong { display: block; margin-bottom: 5px; }
+    .wish-area h2 {
+      margin: 0 0 8px;
+      color: #743b68;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 1.6rem;
+      text-align: center;
+    }
+
+    .section-intro {
+      margin: 0 0 20px;
+      color: #8e7185;
+      font-size: 0.92rem;
+      line-height: 1.55;
+      text-align: center;
+    }
+
+    .status {
+      min-height: 1.5em;
+      margin: 10px 0 0;
+      color: #a64d79;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .status.error { color: #b4234a; }
+
+    .history-tools {
+      display: grid;
+      gap: 10px;
+      margin: 22px 0 14px;
+    }
+
+    .history-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .history-heading h3 {
+      margin: 0;
+      color: #743b68;
+      font-size: 1rem;
+    }
+
+    .wish-count {
+      color: #a37f98;
+      font-size: 0.85rem;
+    }
+
+    .wish-list {
+      display: grid;
+      gap: 11px;
+    }
+
+    .wish-entry {
+      border: 1px solid #f2dce7;
+      border-radius: 16px;
+      padding: 14px 16px;
+      background: #fffafd;
+      overflow-wrap: anywhere;
+    }
+
+    .wish-entry-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .wish-entry strong { color: #a64d79; }
+
+    .wish-entry time {
+      flex: 0 0 auto;
+      color: #a37f98;
+      font-size: 0.75rem;
+    }
+
+    .wish-entry p {
+      margin: 0;
+      color: #765d70;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .empty-state {
+      margin: 0;
+      border: 1px dashed #e9cbd9;
+      border-radius: 16px;
+      padding: 18px;
+      color: #9b7e91;
+      text-align: center;
+    }
+
+    .history-actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .small-button {
+      min-height: 40px;
+      padding: 9px 16px;
+      background: #fff1f6;
+      box-shadow: none;
+      color: #a64d79;
+      font-size: 0.9rem;
+    }
+
+    .small-button:hover {
+      background: #ffe6ef;
+      box-shadow: 0 6px 15px rgb(190 101 153 / 14%);
+    }
 
     .footer {
       margin: 24px 0 0;
@@ -229,26 +371,72 @@ PAGE = """<!doctype html>
     <h1>Chúc mừng sinh nhật<span>Lê Phương Linh</span></h1>
     <div class="cake" aria-hidden="true">🎂</div>
     <p class="message">
-      Chúc Linh tuổi mới thật rực rỡ, luôn vui vẻ, gặp nhiều điều may mắn
-      và những ước mơ đều lần lượt thành hiện thực. Mừng tuổi
+      Chúc bò Lê tuổi mới thật rực rỡ, luôn vui vẻ, gặp nhiều điều may mắn
+      và CÓ NGƯỜI YÊU TỐT KHÔNG CÓ GÌ CHÊ. Tuổi 19 vui vẻ
       <span class="age">19</span> nhé!
     </p>
 
-    <form id="wish-form">
-      <label for="wish">Nhập một điều ước dành cho Linh 💌</label>
-      <textarea id="wish" name="wish" maxlength="300" required
-        placeholder="Viết điều ước thật dễ thương ở đây..."></textarea>
-      <button type="submit">Gửi điều ước ✨</button>
-    </form>
-    <div id="wish-result" class="wish-result" aria-live="polite" hidden></div>
-    <p class="footer">Mong tuổi 19 của Linh ngập tràn yêu thương 💖</p>
+    <button id="music-button" class="music-button" type="button"
+      aria-pressed="false">▶ Nghe nhạc chill đi các bò</button>
+
+    <section class="wish-area" aria-labelledby="wish-heading">
+      <h2 id="wish-heading">Gửi lời chúc &amp; điều ước 💌</h2>
+      <p class="section-intro">Tên và lời nhắn sẽ được lưu.</p>
+      <form id="wish-form">
+        <div class="field">
+          <label for="author">Tên người gửi</label>
+          <input id="author" name="author" maxlength="60" autocomplete="name"
+            placeholder="Ví dụ: Minh Lai" required>
+        </div>
+        <div class="field">
+          <label for="wish">Lời chúc hoặc điều ước dành cho bò Lê</label>
+          <textarea id="wish" name="wish" maxlength="300" required
+        placeholder="Viết điều ước ở đây..."></textarea>
+        </div>
+        <button id="submit-button" type="submit">Gửi lời chúc ✨</button>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+
+      <div class="history-tools">
+        <div class="history-heading">
+          <h3>Nhật ký lời chúc 💖</h3>
+          <span id="wish-count" class="wish-count">Đang tải...</span>
+        </div>
+        <label for="search">Tìm theo tên hoặc nội dung</label>
+        <input id="search" type="search" placeholder="Nhập từ khóa...">
+        <div class="history-actions">
+          <button id="random-button" class="small-button" type="button">🎲 Đọc lời chúc ngẫu nhiên</button>
+        </div>
+      </div>
+      <div id="wish-list" class="wish-list" aria-live="polite">
+        <p class="empty-state">Đang tải lời chúc...</p>
+      </div>
+    </section>
+    <p class="footer">Mong tuổi 19 của bò Lê gặp được người mình yêu thương 💖</p>
   </main>
 
   <script>
     const form = document.querySelector("#wish-form");
+    const authorInput = document.querySelector("#author");
     const input = document.querySelector("#wish");
-    const result = document.querySelector("#wish-result");
+    const submitButton = document.querySelector("#submit-button");
+    const status = document.querySelector("#status");
+    const wishCount = document.querySelector("#wish-count");
+    const wishList = document.querySelector("#wish-list");
+    const searchInput = document.querySelector("#search");
+    const randomButton = document.querySelector("#random-button");
+    const musicButton = document.querySelector("#music-button");
     const colors = ["#f18bad", "#f6c85f", "#9bcf9b", "#a78bdb", "#79c7d8"];
+    let wishes = [];
+    let audioContext;
+    let musicPlaying = false;
+    let musicRun = 0;
+    const melody = [
+      [523.25, 0.32], [659.25, 0.32], [783.99, 0.58], [587.33, 0.32],
+      [698.46, 0.32], [880, 0.58], [783.99, 0.32], [659.25, 0.58],
+      [880, 0.32], [1046.5, 0.32], [783.99, 0.58], [698.46, 0.32],
+      [587.33, 0.32], [783.99, 0.58], [659.25, 0.32], [523.25, 0.85]
+    ];
 
     function celebrate() {
       for (let i = 0; i < 45; i += 1) {
@@ -265,24 +453,168 @@ PAGE = """<!doctype html>
       }
     }
 
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const wish = input.value.trim();
-      if (!wish) {
-        input.value = "";
-        input.focus();
+    function showStatus(message, isError = false) {
+      status.textContent = message;
+      status.classList.toggle("error", isError);
+    }
+
+    function playNote(frequency, duration) {
+      const start = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      const volume = audioContext.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(frequency, start);
+      volume.gain.setValueAtTime(0.0001, start);
+      volume.gain.exponentialRampToValueAtTime(0.12, start + 0.025);
+      volume.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      oscillator.connect(volume);
+      volume.connect(audioContext.destination);
+      oscillator.start(start);
+      oscillator.stop(start + duration + 0.02);
+    }
+
+    async function playMelody(run) {
+      while (musicPlaying && run === musicRun) {
+        for (const [frequency, duration] of melody) {
+          if (!musicPlaying || run !== musicRun) return;
+          playNote(frequency, duration);
+          await new Promise((resolve) => window.setTimeout(resolve, duration * 1000 + 100));
+        }
+      }
+    }
+
+    musicButton.addEventListener("click", async () => {
+      if (musicPlaying) {
+        musicPlaying = false;
+        musicRun += 1;
+        musicButton.textContent = "▶ Nghe nhạc chill đi các bò";
+        musicButton.setAttribute("aria-pressed", "false");
+        if (audioContext) await audioContext.suspend();
         return;
       }
 
-      result.replaceChildren();
-      const title = document.createElement("strong");
-      title.textContent = "Điều ước đã được gửi đến Linh 💝";
-      const text = document.createElement("span");
-      text.textContent = wish;
-      result.append(title, text);
-      result.hidden = false;
-      celebrate();
+      const run = musicRun + 1;
+      musicRun = run;
+      musicPlaying = true;
+      musicButton.textContent = "⏸ Tắt nhạc";
+      musicButton.setAttribute("aria-pressed", "true");
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) throw new Error("Trình duyệt không hỗ trợ phát nhạc.");
+        audioContext ??= new AudioContextClass();
+        await audioContext.resume();
+        if (musicPlaying && run === musicRun) playMelody(run);
+      } catch (error) {
+        if (run === musicRun) {
+          musicPlaying = false;
+          musicButton.textContent = "▶ Phát nhạc sinh nhật";
+          musicButton.setAttribute("aria-pressed", "false");
+          showStatus(error.message || "Không thể phát nhạc trên trình duyệt này.", true);
+        }
+      }
     });
+
+    function renderWishes() {
+      const query = searchInput.value.trim().toLocaleLowerCase("vi");
+      const filtered = wishes.filter((item) =>
+        `${item.author} ${item.message}`.toLocaleLowerCase("vi").includes(query)
+      );
+      wishCount.textContent = query
+        ? `${filtered.length}/${wishes.length} lời chúc`
+        : `${wishes.length} lời chúc`;
+
+      if (!filtered.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = wishes.length
+          ? "Hỏng có thấy."
+          : "Chưa ai chúc, chúc đi bà!";
+        wishList.replaceChildren(empty);
+        return;
+      }
+
+      const entries = filtered.map((item) => {
+        const article = document.createElement("article");
+        article.className = "wish-entry";
+        const top = document.createElement("div");
+        top.className = "wish-entry-top";
+        const name = document.createElement("strong");
+        name.textContent = `💌 ${item.author}`;
+        const date = document.createElement("time");
+        date.dateTime = item.created_at;
+        date.textContent = new Intl.DateTimeFormat("vi-VN", {
+          dateStyle: "medium",
+          timeStyle: "short"
+        }).format(new Date(item.created_at));
+        const message = document.createElement("p");
+        message.textContent = item.message;
+        top.append(name, date);
+        article.append(top, message);
+        return article;
+      });
+      wishList.replaceChildren(...entries);
+    }
+
+    async function loadWishes() {
+      try {
+        const response = await fetch("/api/wishes");
+        if (!response.ok) throw new Error("Ối dồi ôi, Không tải được lịch sử lời chúc.");
+        wishes = await response.json();
+        renderWishes();
+      } catch (error) {
+        wishCount.textContent = "Chưa tải được";
+        wishList.replaceChildren();
+        const message = document.createElement("p");
+        message.className = "empty-state";
+        message.textContent = error.message || "Ối dồi ôi, Có lỗi khi tải lịch sử lời chúc.";
+        wishList.append(message);
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const author = authorInput.value.trim();
+      const wish = input.value.trim();
+      if (!author || !wish) {
+        showStatus("Nhập tên và lời chúc của mom đi", true);
+        return;
+      }
+
+      submitButton.disabled = true;
+      showStatus("Đang lưu lời chúc...");
+      try {
+        const response = await fetch("/api/wishes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ author, message: wish })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Không lưu được lời chúc.");
+        authorInput.value = "";
+        input.value = "";
+        showStatus(`Tam giác ${data.author}, tui đã lưu lại! 💝`);
+        celebrate();
+        await loadWishes();
+      } catch (error) {
+        showStatus(error.message || "Ối dồi ôi, Có lỗi khi lưu lời chúc. Lại đi bà", true);
+      } finally {
+        submitButton.disabled = false;
+      }
+    });
+
+    searchInput.addEventListener("input", renderWishes);
+
+    randomButton.addEventListener("click", () => {
+      if (!wishes.length) {
+        showStatus("Chưa có lời chúc nào để đọc ngẫu nhiên, hihi.");
+        return;
+      }
+      const selected = wishes[Math.floor(Math.random() * wishes.length)];
+      showStatus(`💖 ${selected.author}: “${selected.message}”`);
+      wishList.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    loadWishes();
   </script>
 </body>
 </html>
@@ -290,8 +622,29 @@ PAGE = """<!doctype html>
 
 
 class GreetingHandler(BaseHTTPRequestHandler):
+    database_path = Path(__file__).with_name("sinhnhatlpl_wishes.sqlite3")
+
+    def send_json(self, status: int, data: object) -> None:
+        content = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(content)
+
     def do_GET(self) -> None:
-        if self.path not in ("/", "/index.html"):
+        path = urlparse(self.path).path
+        if path == "/api/wishes":
+            with sqlite3.connect(self.database_path) as connection:
+                connection.row_factory = sqlite3.Row
+                wishes = connection.execute(
+                    "SELECT id, author, message, created_at FROM wishes ORDER BY id DESC"
+                ).fetchall()
+            self.send_json(200, [dict(wish) for wish in wishes])
+            return
+
+        if path not in ("/", "/index.html"):
             self.send_error(404, "Not Found")
             return
 
@@ -302,12 +655,76 @@ class GreetingHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    def do_POST(self) -> None:
+        if urlparse(self.path).path != "/api/wishes":
+            self.send_json(404, {"error": "Not Found"})
+            return
+
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_json(400, {"error": "Kích thước dữ liệu không hợp lệ."})
+            return
+        if content_length <= 0 or content_length > 4096:
+            self.send_json(400, {"error": "Dữ liệu gửi lên không hợp lệ."})
+            return
+
+        try:
+            data = json.loads(self.rfile.read(content_length))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.send_json(400, {"error": "Nội dung gửi lên không phải JSON hợp lệ."})
+            return
+        if not isinstance(data, dict):
+            self.send_json(400, {"error": "Vui lòng gửi tên và lời chúc hợp lệ."})
+            return
+
+        author = data.get("author")
+        message = data.get("message")
+        if not isinstance(author, str) or not isinstance(message, str):
+            self.send_json(400, {"error": "Vui lòng nhập tên và lời chúc hợp lệ."})
+            return
+        author = author.strip()
+        message = message.strip()
+        if not author or len(author) > 60:
+            self.send_json(400, {"error": "Tên cần có từ 1 đến 60 ký tự."})
+            return
+        if not message or len(message) > 300:
+            self.send_json(400, {"error": "Lời chúc cần có từ 1 đến 300 ký tự."})
+            return
+
+        with sqlite3.connect(self.database_path) as connection:
+            cursor = connection.execute(
+                "INSERT INTO wishes (author, message) VALUES (?, ?)",
+                (author, message),
+            )
+            wish_id = cursor.lastrowid
+            connection.row_factory = sqlite3.Row
+            wish = connection.execute(
+                "SELECT id, author, message, created_at FROM wishes WHERE id = ?",
+                (wish_id,),
+            ).fetchone()
+        self.send_json(201, dict(wish))
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Chạy trang chúc mừng sinh nhật Phương Linh.")
     parser.add_argument("--host", default="127.0.0.1", help="Địa chỉ máy chủ (mặc định: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Cổng máy chủ (mặc định: 8000)")
     args = parser.parse_args()
+
+    database_path = Path(__file__).with_name("sinhnhatlpl_wishes.sqlite3")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS wishes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                author TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            )
+            """
+        )
+    GreetingHandler.database_path = database_path
 
     with ThreadingHTTPServer((args.host, args.port), GreetingHandler) as server:
         print(f"Trang đã sẵn sàng: http://{args.host}:{args.port}")
