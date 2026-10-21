@@ -1,7 +1,8 @@
-"""Chạy trang chúc mừng sinh nhật Lê Phương Linh trên máy tính của bạn."""
+"""Chạy trang chúc mừng sinh nhật Lê Phương Linh."""
 
 import argparse
 import json
+import os
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -707,9 +708,13 @@ class GreetingHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    # Đọc host và port từ môi trường do Render tự thiết lập
+    env_host = os.environ.get("HOST", "0.0.0.0")
+    env_port = int(os.environ.get("PORT", 8000))
+
     parser = argparse.ArgumentParser(description="Chạy trang chúc mừng sinh nhật Phương Linh.")
-    parser.add_argument("--host", default="127.0.0.1", help="Địa chỉ máy chủ (mặc định: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=8000, help="Cổng máy chủ (mặc định: 8000)")
+    parser.add_argument("--host", default=env_host, help="Địa chỉ máy chủ")
+    parser.add_argument("--port", type=int, default=env_port, help="Cổng máy chủ")
     args = parser.parse_args()
 
     database_path = Path(__file__).with_name("sinhnhatlpl_wishes.sqlite3")
@@ -728,7 +733,6 @@ def main() -> None:
 
     with ThreadingHTTPServer((args.host, args.port), GreetingHandler) as server:
         print(f"Trang đã sẵn sàng: http://{args.host}:{args.port}")
-        print("Nhấn Ctrl+C để dừng máy chủ.")
         try:
             server.serve_forever()
         except KeyboardInterrupt:
